@@ -2,6 +2,7 @@ use image::{DynamicImage, GrayImage, Luma, Pixel};
 use image::io::Reader as ImageReader;
 use clap::Parser;
 use std::path::PathBuf;
+use rand::{thread_rng, Rng};
 
 #[derive(Parser)]
 struct StringConfig {
@@ -17,6 +18,8 @@ struct StringConfig {
     invert: bool,
     #[clap(long, value_parser, default_value_t=2)]
     depth: usize,
+    #[clap(long, value_parser, default_value_t=0)]
+    randpos: usize,
     #[clap(long, value_parser, default_value_t=true)]
     progress: bool,
     #[clap(short, long, value_parser)]
@@ -158,6 +161,8 @@ fn best_lines(src: &GrayImage, dst: &mut GrayImage, pegs: &Vec<Peg>, current: Pe
         let err = get_line(src, dst, current, *p, linecolor, false);
 
         // add that with a recursed error
+        //TODO heuristic here to say "that err is good enough, no need to recurse"?
+        //TODO multithread here if sufficient maxdepth and at depth 0
         let (rerr, mut pegpath) = best_lines(src, dst, pegs, *p, linecolor, depth+1, maxdepth, constraints);
 
         let err = err + rerr;
@@ -190,6 +195,7 @@ fn gen_img(src: &GrayImage, dst: &mut GrayImage, options: &StringConfig) {
     let right: i32 = (w - 1) as i32;
 
     let linecolor = options.pass_val;
+    let mut rng = thread_rng();
 
     let xseg = w / options.pegs_x;
     for i in 0..options.pegs_x {
@@ -234,7 +240,46 @@ fn gen_img(src: &GrayImage, dst: &mut GrayImage, options: &StringConfig) {
 
         // drawlines to the best peg and update current
         for p in pegpath {
-            get_line(src, dst, current, p, linecolor, true);
+            let mut start = current;
+            let mut end = p;
+
+            if options.randpos != 0 {
+                let halfrange: i32 = (options.randpos / 2) as i32;
+                let sxoff: i32= (rng.gen_range(0..options.randpos) as i32) - halfrange;
+                let syoff: i32= (rng.gen_range(0..options.randpos) as i32) - halfrange;
+                let exoff: i32= (rng.gen_range(0..options.randpos) as i32) - halfrange;
+                let eyoff: i32= (rng.gen_range(0..options.randpos) as i32) - halfrange;
+
+                start.x += sxoff;
+                if start.x < 0 {
+                    start.x = 0;
+                } else if start.x > right {
+                    start.x = right;
+                }
+
+                start.y += syoff;
+                if start.y < 0 {
+                    start.y = 0;
+                } else if start.y > bottom {
+                    start.y = bottom;
+                }
+
+                end.x += exoff;
+                if end.x < 0 {
+                    end.x = 0;
+                } else if end.x > right {
+                    end.x = right;
+                }
+
+                end.y += eyoff;
+                if end.y < 0 {
+                    end.y = 0;
+                } else if end.y > bottom {
+                    end.y = bottom;
+                }
+            }
+
+            get_line(src, dst, start, end, linecolor, true);
             current = p;
         }
     }
