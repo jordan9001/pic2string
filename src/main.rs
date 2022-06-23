@@ -6,17 +6,17 @@ use rand::{thread_rng, Rng};
 
 #[derive(Parser)]
 struct StringConfig {
-    #[clap(long, value_parser, default_value_t=42)]
+    #[clap(long, value_parser, default_value_t=72)]
     pegs_x: usize,
-    #[clap(long, value_parser, default_value_t=42)]
+    #[clap(long, value_parser, default_value_t=72)]
     pegs_y: usize,
-    #[clap(long, value_parser, default_value_t=0x400)]
+    #[clap(long, value_parser, default_value_t=0xC00)]
     passes: usize,
-    #[clap(long, value_parser, default_value_t=0x60)]
+    #[clap(long, value_parser, default_value_t=0x42)]
     pass_val: u8,
     #[clap(long, value_parser, default_value_t=true)]
     invert: bool,
-    #[clap(long, value_parser, default_value_t=2)]
+    #[clap(long, value_parser, default_value_t=1)]
     depth: usize,
     #[clap(long, value_parser, default_value_t=0)]
     randpos: usize,
@@ -162,6 +162,7 @@ fn best_lines(src: &GrayImage, dst: &mut GrayImage, pegs: &Vec<Peg>, current: Pe
 
         // add that with a recursed error
         //TODO heuristic here to say "that err is good enough, no need to recurse"?
+        // or maybe only recurse if 
         //TODO multithread here if sufficient maxdepth and at depth 0
         let (rerr, mut pegpath) = best_lines(src, dst, pegs, *p, linecolor, depth+1, maxdepth, constraints);
 
