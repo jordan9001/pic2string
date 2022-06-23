@@ -7,21 +7,19 @@ use rand::{thread_rng, Rng};
 #[derive(Parser)]
 struct StringConfig {
     #[clap(long, value_parser, default_value_t=72)]
-    pegs_x: usize,
-    #[clap(long, value_parser, default_value_t=72)]
-    pegs_y: usize,
+    pegs: usize,
     #[clap(long, value_parser, default_value_t=0xC00)]
     passes: usize,
     #[clap(long, value_parser, default_value_t=0x42)]
     pass_val: u8,
-    #[clap(long, value_parser, default_value_t=true)]
+    #[clap(long, value_parser, default_value_t=false)]
     invert: bool,
+    #[clap(long, value_parser, default_value_t=false)]
+    noextra: bool,
     #[clap(long, value_parser, default_value_t=1)]
     depth: usize,
     #[clap(long, value_parser, default_value_t=0)]
     randpos: usize,
-    #[clap(long, value_parser, default_value_t=true)]
-    progress: bool,
     #[clap(short, long, value_parser)]
     infile: PathBuf,
     #[clap(short, long, value_parser)]
@@ -134,7 +132,7 @@ fn get_line(src: &GrayImage, dst: &mut GrayImage, start: Peg, end: Peg, val: u8,
     }
 }
 
-fn best_lines(src: &GrayImage, dst: &mut GrayImage, pegs: &Vec<Peg>, current: Peg, linecolor: u8, depth: usize, maxdepth: usize, constraints: [i32;4]) -> (i64, Vec<Peg>) {
+fn best_lines(src: &GrayImage, dst: &mut GrayImage, pegs: &Vec<Peg>, current: Peg, linecolor: u8, depth: usize, maxdepth: usize, constraints: [i32;4], tryextra: bool) -> (i64, Vec<Peg>) {
 
     // bruteforce best upto max depth
     if depth >= maxdepth {
@@ -162,9 +160,8 @@ fn best_lines(src: &GrayImage, dst: &mut GrayImage, pegs: &Vec<Peg>, current: Pe
 
         // add that with a recursed error
         //TODO heuristic here to say "that err is good enough, no need to recurse"?
-        // or maybe only recurse if 
         //TODO multithread here if sufficient maxdepth and at depth 0
-        let (rerr, mut pegpath) = best_lines(src, dst, pegs, *p, linecolor, depth+1, maxdepth, constraints);
+        let (rerr, mut pegpath) = best_lines(src, dst, pegs, *p, linecolor, depth+1, maxdepth, constraints, false);
 
         let err = err + rerr;
 
@@ -173,6 +170,11 @@ fn best_lines(src: &GrayImage, dst: &mut GrayImage, pegs: &Vec<Peg>, current: Pe
             best_pegs = vec![*p];
             best_pegs.append(&mut pegpath);
         }
+    }
+
+    if tryextra && best_err == 0 {
+        // recurse a bit farther if we would have ended early
+        return best_lines(src, dst, pegs, current, linecolor, 0, maxdepth+1, constraints, false);
     }
 
     return (best_err, best_pegs);
@@ -184,10 +186,10 @@ fn gen_img(src: &GrayImage, dst: &mut GrayImage, options: &StringConfig) {
     // TODO also generate a coordinate path
 
     // set up the pegs
-    let numpegs = (options.pegs_x * 2) + (options.pegs_y * 2) - 1;
+    let numpegs = (options.pegs * 4) - 1;
     let mut pegs = vec![Peg{x:0, y:0}; numpegs];
 
-    //TODO other shapes
+    //TODO other shapes, like circle or triangle
     // for now we just rectangle
     let w: usize = src.width() as usize;
     let h: usize = src.height() as usize;
@@ -198,22 +200,22 @@ fn gen_img(src: &GrayImage, dst: &mut GrayImage, options: &StringConfig) {
     let linecolor = options.pass_val;
     let mut rng = thread_rng();
 
-    let xseg = w / options.pegs_x;
-    for i in 0..options.pegs_x {
+    let xseg = w / options.pegs;
+    for i in 0..options.pegs {
         let xpos = (xseg * i) as i32;
         pegs[i] = Peg{x: xpos, y: 0};
-        pegs[i + options.pegs_x] = Peg{x: xpos, y: bottom};
+        pegs[i + options.pegs] = Peg{x: xpos, y: bottom};
     }
 
-    let ysides_off = (options.pegs_x * 2) - 1;
-    let yseg = h / options.pegs_y;
-    for i in 0..options.pegs_y {
+    let ysides_off = (options.pegs * 2) - 1;
+    let yseg = h / options.pegs;
+    for i in 0..options.pegs {
         let ypos = (yseg * i) as i32;
         if ypos != 0 {
             // don't make 0,0 twice
             pegs[i + ysides_off] = Peg{x: 0, y: ypos};
         }
-        pegs[i + ysides_off + options.pegs_y] = Peg{x: right, y: ypos};
+        pegs[i + ysides_off + options.pegs] = Peg{x: right, y: ypos};
     }
 
     let mut current = pegs[0];
@@ -224,15 +226,13 @@ fn gen_img(src: &GrayImage, dst: &mut GrayImage, options: &StringConfig) {
     };
     let mut tillprint = perpercent;
     for i in 0..options.passes {
-        if options.progress {
-            if tillprint >= perpercent {
-                tillprint = 0;
-                println!("line {} / {}", i, options.passes);
-            }
-            tillprint += 1;
+        if tillprint >= perpercent {
+            tillprint = 0;
+            println!("line {} / {}", i, options.passes);
         }
+        tillprint += 1;
 
-        let (best_err, pegpath) = best_lines(src, dst, &pegs, current, linecolor, 0, options.depth, [0, 0, right, bottom]);
+        let (best_err, pegpath) = best_lines(src, dst, &pegs, current, linecolor, 0, options.depth, [0, 0, right, bottom], !options.noextra);
 
         if best_err <= 0 {
             println!("Could not find a good destination, stopping early after {} lines", i);
@@ -291,7 +291,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut imgin = ImageReader::open(&conf.infile)?.decode()?.grayscale();
 
-    if conf.invert {
+    if !conf.invert {
         imgin.invert();
     }
 
@@ -304,7 +304,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut img = DynamicImage::from(img);
 
-    if conf.invert {
+    if !conf.invert {
         img.invert();
     }
 
