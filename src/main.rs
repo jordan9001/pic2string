@@ -1,25 +1,28 @@
 use image::{DynamicImage, GrayImage, Luma, Pixel};
 use image::io::Reader as ImageReader;
-use std::env;
+use clap::Parser;
+use std::path::PathBuf;
 
+#[derive(Parser)]
 struct StringConfig {
+    #[clap(long, value_parser, default_value_t=42)]
     pegs_x: usize,
+    #[clap(long, value_parser, default_value_t=42)]
     pegs_y: usize,
+    #[clap(long, value_parser, default_value_t=0x400)]
     passes: usize,
+    #[clap(long, value_parser, default_value_t=0x60)]
     pass_val: u8,
+    #[clap(long, value_parser, default_value_t=true)]
     invert: bool,
-}
-
-impl Default for StringConfig {
-    fn default() -> StringConfig {
-        StringConfig {
-            pegs_x: 93,
-            pegs_y: 93,
-            passes: 0xc00,
-            pass_val: 0x24,
-            invert: true,
-        }
-    }
+    #[clap(long, value_parser, default_value_t=2)]
+    depth: usize,
+    #[clap(long, value_parser, default_value_t=true)]
+    progress: bool,
+    #[clap(short, long, value_parser)]
+    infile: PathBuf,
+    #[clap(short, long, value_parser)]
+    outfile: PathBuf,
 }
 
 #[derive(Copy, Clone)]
@@ -128,6 +131,47 @@ fn get_line(src: &GrayImage, dst: &mut GrayImage, start: Peg, end: Peg, val: u8,
     }
 }
 
+fn best_lines(src: &GrayImage, dst: &mut GrayImage, pegs: &Vec<Peg>, current: Peg, linecolor: u8, depth: usize, maxdepth: usize, constraints: [i32;4]) -> (i64, Vec<Peg>) {
+
+    // bruteforce best upto max depth
+    if depth >= maxdepth {
+        return (0, vec![]);
+    }
+
+    let [left, top, right, bottom] = constraints;
+
+    // for each peg
+    let mut best_err = 0;
+    let mut best_pegs: Vec<Peg> = vec![];
+
+    // try every combo of pegs
+    for p in pegs {
+        if  current.x == left && p.x == left ||
+            current.x == right && p.x == right ||
+            current.y == top && p.y == top ||
+            current.y == bottom && p.y == bottom
+        {
+            continue;
+        }
+
+        // get total error of this line
+        let err = get_line(src, dst, current, *p, linecolor, false);
+
+        // add that with a recursed error
+        let (rerr, mut pegpath) = best_lines(src, dst, pegs, *p, linecolor, depth+1, maxdepth, constraints);
+
+        let err = err + rerr;
+
+        if err > best_err {
+            best_err = err;
+            best_pegs = vec![*p];
+            best_pegs.append(&mut pegpath);
+        }
+    }
+
+    return (best_err, best_pegs);
+}
+
 fn gen_img(src: &GrayImage, dst: &mut GrayImage, options: &StringConfig) {
     // for given number of passes, go from current peg and find what line most brings crossed pixels closer to the image's value
 
@@ -166,60 +210,40 @@ fn gen_img(src: &GrayImage, dst: &mut GrayImage, options: &StringConfig) {
     }
 
     let mut current = pegs[0];
+    let perpercent = if options.passes >= 100 {
+        options.passes / 100
+    } else {
+        1
+    };
+    let mut tillprint = perpercent;
     for i in 0..options.passes {
-        let mut best_err = 0;
-        let mut best_peg = Peg{x: -1, y: -1};
-
-        for p in &pegs {
-            if  current.x == 0 && p.x == 0 ||
-                current.x == right && p.x == right ||
-                current.y == 0 && p.y == 0 ||
-                current.y == bottom && p.y == bottom
-            {
-                continue;
+        if options.progress {
+            if tillprint >= perpercent {
+                tillprint = 0;
+                println!("line {} / {}", i, options.passes);
             }
-
-            // get total error of this line
-            let err = get_line(src, dst, current, *p, linecolor, false);
-
-            if err > best_err {
-                best_err = err;
-                best_peg = *p;
-            }
+            tillprint += 1;
         }
+
+        let (best_err, pegpath) = best_lines(src, dst, &pegs, current, linecolor, 0, options.depth, [0, 0, right, bottom]);
 
         if best_err <= 0 {
             println!("Could not find a good destination, stopping early after {} lines", i);
             break;
         }
 
-        // draw to the best peg
-        get_line(src, dst, current, best_peg, linecolor, true);
-
-        current = best_peg;
+        // drawlines to the best peg and update current
+        for p in pegpath {
+            get_line(src, dst, current, p, linecolor, true);
+            current = p;
+        }
     }
-}
-
-fn usage() {
-    println!("Usage: pic2string <path/to/input/img> <path/for/output/img>")
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Take argument as image
-    let args: Vec<String> = env::args().collect();
+    let conf = StringConfig::parse();
 
-    if args.len() < 3 {
-        usage();
-        return Err("Invalid Command Arguments".into());
-    }
-
-    let conf = StringConfig {
-        ..Default::default()
-    };
-
-    // TODO parse rest of args into StringConfig
-
-    let mut imgin = ImageReader::open(&args[1])?.decode()?.grayscale();
+    let mut imgin = ImageReader::open(&conf.infile)?.decode()?.grayscale();
 
     if conf.invert {
         imgin.invert();
@@ -238,7 +262,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         img.invert();
     }
 
-    img.save(&args[2])?;
+    img.save(&conf.outfile)?;
 
     Ok(())
 }
